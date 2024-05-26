@@ -18,13 +18,8 @@ typedef struct thread_info
     char *dir;
 } thread_info;
 
-// función del thread
 void *servicio(void *arg)
 {
-    int entero;
-    int longitud;
-    char *string;
-    unsigned char *array;
     thread_info *thinf = arg; // argumento recibido
 
     // si recv devuelve <=0 el cliente ha cortado la conexión;
@@ -33,43 +28,51 @@ void *servicio(void *arg)
     // se hayan recibido todos los datos solicitados o haya habido un error.
     while (1)
     {
-
-        int longitud_fname;
-        if (recv(thinf->socket, &longitud_fname, sizeof(int), MSG_WAITALL) != sizeof(int))
+        int longitud_fname_net;
+        if (recv(thinf->socket, &longitud_fname_net, sizeof(int), MSG_WAITALL) != sizeof(int))
             break;
-        longitud_fname = ntohl(longitud_fname);
+        int longitud_fname = ntohl(longitud_fname_net);
 
-        char *fname;
-        fname = malloc(longitud_fname + 1);
-        if (recv(thinf->socket, fname, longitud_fname, MSG_WAITALL) != longitud_fname){
+        char *fname = malloc(longitud_fname + 1);
+        if (recv(thinf->socket, fname, longitud_fname, MSG_WAITALL) != longitud_fname)
+        {
             free(fname);
             break;
         }
         fname[longitud_fname] = '\0';
 
-        int n_bloque;
-        if (recv(thinf->socket, &n_bloque, sizeof(int), MSG_WAITALL) != sizeof(int)){
+        int n_bloque_net;
+        if (recv(thinf->socket, &n_bloque_net, sizeof(int), MSG_WAITALL) != sizeof(int))
+        {
             free(fname);
             break;
         }
-        n_bloque = ntohl(n_bloque);
+        int n_bloque = ntohl(n_bloque_net);
 
-        int size;
-        if (recv(thinf->socket, &size, sizeof(int), MSG_WAITALL) != sizeof(int)){
+        int num_replica_net;
+        if (recv(thinf->socket, &num_replica_net, sizeof(int), MSG_WAITALL) != sizeof(int)){
             free(fname);
             break;
         }
-        size = ntohl(size);
+        int num_replica = ntohl(num_replica_net);
+
+        int size_net;
+        if (recv(thinf->socket, &size_net, sizeof(int), MSG_WAITALL) != sizeof(int))
+        {
+            free(fname);
+            break;
+        }
+        int size = ntohl(size_net);
+        printf("recibido size %d\n", size);
 
         char dirname[256];
         sprintf(dirname, "%s/%s", thinf->dir, fname);
         mkdir(dirname, 0755);
 
         char filename[256];
-        sprintf(filename, "%s/%d_0", dirname, n_bloque);
+        sprintf(filename, "%s/%d_%d", dirname, n_bloque, num_replica);
         int fd = open(filename, O_RDWR | O_CREAT, 0666);
         printf("fichero %s creado\n", filename);
-        free(fname);
 
         if (ftruncate(fd,size) < 0)
         {
@@ -88,19 +91,100 @@ void *servicio(void *arg)
         if (recv(thinf->socket, p, size, MSG_WAITALL) != size)
             break;
 
+        if (num_replica == 0){
+            int num_replicas_net;
+            if (recv(thinf->socket, &num_replicas_net, sizeof(int), MSG_WAITALL) != sizeof(int))
+            {
+                break;
+            }
+            int num_replicas = ntohl(num_replicas_net);
 
-        int bytes_escritos = htonl(size);
-        if (write(thinf->socket, &bytes_escritos, sizeof(int)) < 0)
-        {
-            perror("error en write");
-            break;
+            unsigned int *ips = malloc(num_replicas * sizeof(unsigned int));
+            unsigned short *ports = malloc(num_replicas * sizeof(unsigned short));
+            if (recv(thinf->socket, ips, num_replicas * sizeof(unsigned int), MSG_WAITALL) != num_replicas * sizeof(unsigned int)){
+                break;
+            }
+            if (recv(thinf->socket, ports, num_replicas * sizeof(unsigned short), MSG_WAITALL) != num_replicas * sizeof(unsigned short)){
+                break;
+            }
+
+            int bytes_escritos_total = 0;
+            int bytes_escritos = 0;
+            for (int i = 1; i < num_replicas; i++){
+
+                int sockfd = create_socket_cln_by_addr(ips[i], ports[i]);
+                if (sockfd < 0){
+                    perror("error en create_socket_cln_by_addr");
+                    return NULL;
+                }
+
+                struct iovec iov[6];
+
+                iov[0].iov_base = &longitud_fname_net;
+                iov[0].iov_len = sizeof(int);
+
+                iov[1].iov_base = fname;
+                iov[1].iov_len = longitud_fname;
+
+                iov[2].iov_base = &n_bloque_net;
+                iov[2].iov_len = sizeof(int);
+
+                int n_replica_net = htonl(i);
+                iov[3].iov_base = &n_replica_net;
+                iov[3].iov_len = sizeof(int);
+
+                iov[4].iov_base = &size_net;
+                iov[4].iov_len = sizeof(int);
+
+                iov[5].iov_base = p;
+                iov[5].iov_len = size;
+
+                if (writev(sockfd, iov, 6) < 0)
+                {
+                    perror("error en writev");
+                    close(sockfd);
+                    return NULL;
+                }
+
+                if (read(sockfd, &bytes_escritos, sizeof(int)) != sizeof(int)){
+                    perror("error en read");
+                    close(sockfd);
+                    return NULL;
+                }
+
+                bytes_escritos = ntohl(bytes_escritos);
+                if (bytes_escritos != size){
+                    close(sockfd);
+                    return NULL;
+                }
+                bytes_escritos_total += bytes_escritos;
+            }
+            int bytes_escritos_net = htonl(size);
+            if (write(thinf->socket, &bytes_escritos_net, sizeof(int)) < 0){
+                perror("error en write");
+                break;
+            }
+            free(ips);
+            free(ports);
         }
+        else{
+            int bytes_escritos = htonl(size);
+            if (write(thinf->socket, &bytes_escritos, sizeof(int)) < 0)
+            {
+                perror("error en write");
+                break;
+            }
+        }
+        free(fname);
     }
     close(thinf->socket);
     free(thinf);
     printf("conexión del cliente cerrada\n");
     return NULL;
 }
+
+
+
 int main(int argc, char *argv[])
 {
     int s, s_conec, s_cli;
@@ -115,7 +199,6 @@ int main(int argc, char *argv[])
     }
     // Asegurándose de que el directorio de almacenamiento existe
     mkdir(argv[1], 0755);
-    // chdir(argv[1]);
 
     // inicializa el socket y lo prepara para aceptar conexiones
     unsigned short puerto;

@@ -1,19 +1,3 @@
-// // PUEDE USAR EL EJEMPLO DE SOCKETS servidor.c COMO PUNTO DE PARTIDA.
-// #include <stdio.h>
-// #include "master.h"
-// #include "common.h"
-// #include "common_srv.h"
-// #include "map.h"
-// #include "array.h"
-
-// int main(int argc, char *argv[]) {
-//     if (argc!=2) {
-//         fprintf(stderr, "Uso: %s puerto\n", argv[0]);
-//         return -1;
-//     }
-//     return 0;
-// }
-
 // EJEMPLO DE SERVIDOR MULTITHREAD QUE RECIBE PETICIONES DE LOS CLIENTES.
 // PUEDE USARLO COMO BASE PARA DESARROLLAR EL MASTER Y EL SERVER DE LA PRÁCTICA.
 #include <netinet/in.h>
@@ -43,6 +27,7 @@ typedef struct file_info
     int rep_factor;
     char *fname;
     array *block_list;
+    map *server_map;
 } file_info;
 
 map *files_map;
@@ -69,8 +54,6 @@ void *servicio(void *arg)
 
     char op_code;
     int longitud;
-    int blocksize = 0;
-    int rep_factor = 0;
     char *fname;
 
     // si recv devuelve <=0 el cliente ha cortado la conexión;
@@ -113,16 +96,17 @@ void *servicio(void *arg)
                 free(f);
                 break;
             }
-            printf("Recibido blocksize: %d\n", blocksize);
+            printf("Recibido blocksize: %d\n", f->blocksize);
 
             if (recv(thinf->socket, &f->rep_factor, sizeof(int), MSG_WAITALL) != sizeof(int)){
                 free(f->fname);
                 free(f);
                 break;
             }
-            printf("Recibido rep_factor: %d\n", rep_factor);
+            printf("Recibido rep_factor: %d\n", f->rep_factor);
 
             f->block_list = array_create(1); // inicializa el array
+            f->server_map = map_create(key_string, 1);
 
 	        int result = map_put(files_map, f->fname, f);
 
@@ -226,7 +210,6 @@ void *servicio(void *arg)
             iov[0].iov_len = sizeof(int);
 
             int ip_net = htonl(server->ip);
-            // printf("ip enviada %d\n", server->ip);
             iov[1].iov_base = &ip_net;
             iov[1].iov_len = sizeof(int);
 
@@ -258,34 +241,43 @@ void *servicio(void *arg)
                 break;
             }
 
-            int serv_asig = alloc_srv(servers); // usa alloc_srv para elegir el servidor
-            server_info *server;
-            server = array_get(servers, serv_asig, &err);
-            if (err == -1){
-                perror("error en array_get, el servidor no existe");
+            int n_servers;
+            if (recv(thinf->socket, &n_servers, sizeof(int), MSG_WAITALL) != sizeof(int))
                 break;
+            printf("Recibido n_servers: %d\n", n_servers);
+
+            unsigned int *ips = malloc(n_servers * sizeof(unsigned int));
+            unsigned short *ports = malloc(n_servers * sizeof(unsigned short));
+            server_info **servers_array = malloc(n_servers * sizeof(server_info));
+            for (int i = 0; i < n_servers; i++){
+                int serv_asig = alloc_srv(servers);
+                server_info *server = array_get(servers, serv_asig, &err);
+                if (err == -1){
+                    perror("error en array_get, el servidor no existe");
+                    break;
+                }
+                ips[i] = server->ip;
+                ports[i] = server->puerto;
+                servers_array[i] = server;
             }
-            printf("server asignado es el numero %d\n\n\n\n", serv_asig);
-            printf("blocksize y rep_factor del fichero: %d, %d\n\n", fAux->blocksize, fAux->rep_factor);
-            printf("el size de block_list es %d\n\n", array_size(fAux->block_list));
-            array_append(fAux->block_list, server); // insertamos en la lista de bloques del fichero el descriptor del servidor
 
+            array_append(fAux->block_list, servers_array);
+            map_put(fAux->server_map, &ips[0], ips);
 
-            // envía la información del servidor asignado
             struct iovec iov[2];
+            iov[0].iov_base = ports;
+            iov[0].iov_len = n_servers * sizeof(unsigned short);
 
-            int puerto_net = htons(server->puerto);
-            iov[0].iov_base = &puerto_net;
-            iov[0].iov_len = sizeof(int);
-
-            int ip_net = htonl(server->ip);
-            iov[1].iov_base = &ip_net;
-            iov[1].iov_len = sizeof(int);
+            iov[1].iov_base = ips;
+            iov[1].iov_len = n_servers * sizeof(unsigned int);
 
             if (writev(thinf->socket, iov, 2) < 0){
                 perror("error en writev");
                 break;
             }
+
+            printf("fin");
+
         }
         else if (op_code == 'I') // obtiene información de la asignación de servidores a bloques
         {
@@ -308,6 +300,13 @@ void *servicio(void *arg)
             }
             n_bloque = ntohl(n_bloque_net);
 
+            int n_servers;
+            if (recv(thinf->socket, &n_servers, sizeof(int), MSG_WAITALL) != sizeof(int)){
+                free(fname);
+                break;
+            }
+            printf("n_servers recibido %d\n",n_servers);
+
 
             struct iovec iov[4];
             int err = 0;
@@ -317,37 +316,45 @@ void *servicio(void *arg)
             iov[0].iov_base = &err;
             iov[0].iov_len = sizeof(int);
 
+            unsigned short *ports = malloc(n_servers * sizeof(unsigned short));
+            unsigned int *ips = malloc(n_servers * sizeof(unsigned int));
             int err2 = -1;
-            server_info *server;
             if (err != -1){
                 printf("n_bloque recibido %d\n", n_bloque);
-                server = array_get(fAux->block_list, n_bloque, &err2); // busca el descriptor de servidor asignado para n_bloque
+                server_info **servers_array = array_get(fAux->block_list, n_bloque, &err2);
+                for (int i = 0; i < n_servers; i++){
+                    if (err2 == -1)
+                        break;
+                    server_info *server = servers_array[i];
+                    if (!server){
+                        err2 = -1;
+                        break;
+                    }
+                    ports[i] = server->puerto;
+                    ips[i] = server->ip;
+                }
             }
 
             iov[1].iov_base = &err2;
             iov[1].iov_len = sizeof(int);
 
 
-            // envía la información del servidor asignado
-
+            // envía la información de los servidores asignados
             if (err != -1 && err2 != -1){
-                int puerto_net = htons(server->puerto);
-                iov[2].iov_base = &puerto_net;
-                iov[2].iov_len = sizeof(int);
+                iov[2].iov_base = ports;
+                iov[2].iov_len = n_servers * sizeof(unsigned short);
 
-                int ip_net = htonl(server->ip);
-                iov[3].iov_base = &ip_net;
-                iov[3].iov_len = sizeof(int);
+                iov[3].iov_base = ips;
+                iov[3].iov_len = n_servers * sizeof(unsigned int);
             }
             else{
                 iov[2].iov_base = &err;
-                iov[2].iov_len = sizeof(int);
+                iov[2].iov_len = n_servers * sizeof(unsigned short);
 
                 iov[3].iov_base = &err2;
-                iov[3].iov_len = sizeof(int);
+                iov[3].iov_len = n_servers * sizeof(unsigned int);
             }
             
-
             if (writev(thinf->socket, iov, 4) < 0){
                 perror("error en writev");
                 break;
@@ -399,7 +406,7 @@ int main(int argc, char *argv[])
         // crea el thread de servicio
         thread_info *thinf = malloc(sizeof(thread_info));
         thinf->socket = s_conec;
-        thinf->ip = dir_cliente.sin_addr.s_addr;
+        thinf->ip = dir_cliente.sin_addr.s_addr; // posible cambio
         pthread_create(&thid, &atrib_th, servicio, thinf);
     }
     close(s); // cierra el socket general

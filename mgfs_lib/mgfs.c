@@ -87,7 +87,7 @@ int mgfs_get_def_blocksize(const mgfs_fs *fs)
 {
     if (fs == NULL)
     {
-        // perror("conexión no existente");
+        perror("conexión no existente");
         return -1;
     }
     return fs->def_blocksize;
@@ -97,7 +97,7 @@ int mgfs_get_def_rep_factor(const mgfs_fs *fs)
 {
     if (fs == NULL)
     {
-        // perror("conexión no existente");
+        perror("conexión no existente");
         return -1;
     }
     return fs->def_rep_factor;
@@ -114,13 +114,13 @@ mgfs_file *mgfs_create(const mgfs_fs *fs, const char *fname,
 {
     if (fs == NULL)
     {
-        // perror("conexión no existente");
+        perror("conexión no existente");
         return NULL;
     }
     mgfs_file *file = malloc(sizeof(mgfs_file));
     if (file == NULL)
     {
-        // perror("error en malloc");
+        perror("error en malloc");
         return NULL;
     }
 
@@ -131,7 +131,6 @@ mgfs_file *mgfs_create(const mgfs_fs *fs, const char *fname,
     file->fname = strdup(fname);
 
     char op_code = 'C';
-    //    op_code = htonl(op_code);
 
     struct iovec iov[5];
     iov[0].iov_base = &op_code;
@@ -153,7 +152,7 @@ mgfs_file *mgfs_create(const mgfs_fs *fs, const char *fname,
 
     if (writev(fs->socket, iov, 5) < 0)
     {
-        // perror("error en writev");
+        perror("error en writev");
         free(file);
         return NULL;
     }
@@ -161,14 +160,14 @@ mgfs_file *mgfs_create(const mgfs_fs *fs, const char *fname,
     int result;
     if (recv(fs->socket, &result, sizeof(int), MSG_WAITALL) != sizeof(int))
     {
-        // perror("error en recv");
+        perror("error en recv");
         free(file);
         return NULL;
     }
 
     if (result == -1)
     {
-        // perror("error al crear el fichero");
+        perror("error al crear el fichero");
         free(file);
         return NULL;
     }
@@ -231,13 +230,13 @@ mgfs_file *mgfs_open(const mgfs_fs *fs, const char *fname)
 {
     if (fs == NULL)
     {
-        // perror("conexión no existente");
+        perror("conexión no existente");
         return NULL;
     }
     mgfs_file *file = malloc(sizeof(mgfs_file));
     if (file == NULL)
     {
-        // perror("error en malloc");
+        perror("error en malloc");
         return NULL;
     }
 
@@ -260,7 +259,7 @@ mgfs_file *mgfs_open(const mgfs_fs *fs, const char *fname)
 
     if (writev(fs->socket, iov, 3) < 0)
     {
-        // perror("error en writev");
+        perror("error en writev");
         free(file);
         return NULL;
     }
@@ -268,28 +267,28 @@ mgfs_file *mgfs_open(const mgfs_fs *fs, const char *fname)
     int result;
     if (recv(fs->socket, &result, sizeof(int), MSG_WAITALL) != sizeof(int))
     {
-        // perror("error en recv");
+        perror("error en recv");
         free(file);
         return NULL;
     }
 
     if (result == -1)
     {
-        // perror("error al abrir el fichero");
+        perror("error al abrir el fichero");
         free(file);
         return NULL;
     }
 
     if (recv(fs->socket, &file->blocksize, sizeof(int), MSG_WAITALL) != sizeof(int))
     {
-        // perror("error al recibir el tamaño de bloque");
+        perror("error al recibir el tamaño de bloque");
         free(file);
         return NULL;
     }
 
     if (recv(fs->socket, &file->rep_factor, sizeof(int), MSG_WAITALL) != sizeof(int))
     {
-        // perror("error al recibir el factor de replicación");
+        perror("error al recibir el factor de replicación");
         free(file);
         return NULL;
     }
@@ -336,7 +335,6 @@ int _mgfs_serv_info(const mgfs_fs *fs, int n_server, unsigned int *ip,
         return -1;
     }
     *port = ntohs(port_net);
-    printf("Puerto recibido %d\n", port);
 
     int ip_net;
     if (recv(fs->socket, &ip_net, sizeof(int), MSG_WAITALL) != sizeof(int))
@@ -345,7 +343,6 @@ int _mgfs_serv_info(const mgfs_fs *fs, int n_server, unsigned int *ip,
         return -1;
     }
     *ip = ntohl(ip_net);
-    printf("ip recibida %d, %d\n", ip, ip_net);
 
     return 0;
 }
@@ -363,18 +360,18 @@ int _mgfs_alloc_next_block(const mgfs_file *file, unsigned int *ips, unsigned sh
 {
     if (file == NULL)
     {
-        //        perror("file no existente");
+        perror("file no existente");
         return -1;
     }
     if (file->fs == NULL)
     {
-        //        perror("conexión no existente");
+        perror("conexión no existente");
         return -1;
     }
 
     char op_code = 'A';
 
-    struct iovec iov[3];
+    struct iovec iov[4];
     iov[0].iov_base = &op_code;
     iov[0].iov_len = sizeof(char);
 
@@ -386,29 +383,25 @@ int _mgfs_alloc_next_block(const mgfs_file *file, unsigned int *ips, unsigned sh
     iov[2].iov_base = file->fname;
     iov[2].iov_len = longitud_fname;
 
-    if (writev(file->fs->socket, iov, 3) < 0)
+    int num_servers = file->rep_factor;
+    iov[3].iov_base = &num_servers;
+    iov[3].iov_len = sizeof(int);
+
+    if (writev(file->fs->socket, iov, 4) < 0)
     {
-        //        perror("error en writev");
+        perror("error en writev");
         return -1;
     }
 
-    int port_net;
-    if (recv(file->fs->socket, &port_net, sizeof(int), MSG_WAITALL) != sizeof(int))
-    {
-        //        perror("error en recv");
-        return -1;
-    }
-    *ports = ntohs(port_net);
-    //    printf("Puerto recibido %d\n", ports);
 
-    int ip_net;
-    if (recv(file->fs->socket, &ip_net, sizeof(int), MSG_WAITALL) != sizeof(int))
-    {
-        //        perror("error en recv");
+    if (recv(file->fs->socket, ports, num_servers * sizeof(unsigned short), MSG_WAITALL) != (num_servers * sizeof(unsigned short))){
+        perror("error en recv");
         return -1;
     }
-    *ips = ntohl(ip_net);
-    //    printf("ip recibida %d, %d\n", ips, ip_net);
+    if (recv(file->fs->socket, ips, num_servers * sizeof(unsigned int), MSG_WAITALL) != (num_servers * sizeof(unsigned int))){
+        perror("error en recv");
+        return -1;
+    }
 
     return 0;
 }
@@ -430,7 +423,7 @@ int _mgfs_get_block_allocation(const mgfs_file *file, int n_bloque,
 
     char op_code = 'I';
 
-    struct iovec iov[4];
+    struct iovec iov[5];
     iov[0].iov_base = &op_code;
     iov[0].iov_len = sizeof(char);
 
@@ -446,41 +439,36 @@ int _mgfs_get_block_allocation(const mgfs_file *file, int n_bloque,
     iov[3].iov_base = &n_bloque_net;
     iov[3].iov_len = sizeof(int);
 
-    if (writev(file->fs->socket, iov, 4) < 0)
+    int num_servers = file->rep_factor;
+    iov[4].iov_base = &num_servers;
+    iov[4].iov_len = sizeof(int);
+
+    if (writev(file->fs->socket, iov, 5) < 0)
     {
-        //        perror("error en writev");
+        perror("error en writev");
         return -1;
     }
 
     int err;
-    // read(file->fs->socket, &err, sizeof(int));
-    recv(file->fs->socket, &err, sizeof(int), MSG_WAITALL);
-    // if (err == -1)
-    //     return -1;
+    if (recv(file->fs->socket, &err, sizeof(int), MSG_WAITALL) != sizeof(int)){
+        perror("error en recv");
+        return -1;
+    }
     
     int err2;
-    // read(file->fs->socket, &err, sizeof(int));
-    recv(file->fs->socket, &err2, sizeof(int), MSG_WAITALL);
-    // if (err == -1)
-    //     return -1;
-
-    int port_net;
-    if (recv(file->fs->socket, &port_net, sizeof(int), MSG_WAITALL) != sizeof(int))
-    {
-        //        perror("error en recv");
+    if (recv(file->fs->socket, &err2, sizeof(int), MSG_WAITALL) != sizeof(int)){
+        perror("error en recv");
         return -1;
     }
-    *ports = ntohs(port_net);
-    //    printf("Puerto recibido %d\n", ports);
 
-    int ip_net;
-    if (recv(file->fs->socket, &ip_net, sizeof(int), MSG_WAITALL) != sizeof(int))
-    {
-        //        perror("error en recv");
+    if (recv(file->fs->socket, ports, num_servers * sizeof(unsigned short), MSG_WAITALL) != (num_servers * sizeof(unsigned short))){
+        perror("error en recv");
         return -1;
     }
-    *ips = ntohl(ip_net);
-    //    printf("ip recibida %d, %d\n", ips, ip_net);
+    if (recv(file->fs->socket, ips, num_servers * sizeof(unsigned int), MSG_WAITALL) != (num_servers * sizeof(unsigned int))){
+        perror("error en recv");
+        return -1;
+    }
     if (err == -1 || err2 == -1)
         return -1;
 
@@ -509,31 +497,32 @@ int mgfs_write(mgfs_file *file, const void *buff, unsigned long size)
     }
 
     int blocksize = mgfs_get_blocksize(file);
-    if (size % blocksize)
+    if (size % mgfs_get_blocksize(file))
         return -1;
 
     int num_blocks = size / blocksize;
-    int bytes_escritos_total = 0;
 
-    for (int i = 0; i < num_blocks; i++)
-    {
-        unsigned int ips[file->rep_factor];
-        unsigned short ports[file->rep_factor];
-        if (_mgfs_alloc_next_block(file, ips, ports) < 0)
-        {
+    int bytes_escritos_total = 0;
+    for (int i = 0; i < num_blocks; i++){
+        unsigned int *ips = malloc(file->rep_factor * sizeof(unsigned int));
+        unsigned short *ports = malloc(file->rep_factor * sizeof(unsigned short));
+
+        if (_mgfs_alloc_next_block(file, ips, ports) < 0){
             perror("error en _mgfs_alloc_next_block");
+            free(ips);
+            free(ports);
             return -1;
         }
 
         int sockfd = create_socket_cln_by_addr(ips[0], ports[0]);
-        if (sockfd < 0)
-        {
+        if (sockfd < 0){
             perror("error en create_socket_cln_by_addr");
+            free(ips);
+            free(ports);
             return -1;
         }
 
-        // envía al servidor el nombre del fichero, número de bloque y el contenido a escribir
-        struct iovec iov[5];
+        struct iovec iov[9];
 
         int longitud_fname = strlen(file->fname);
         int longitud_fname_net = htonl(longitud_fname);
@@ -543,44 +532,65 @@ int mgfs_write(mgfs_file *file, const void *buff, unsigned long size)
         iov[1].iov_base = file->fname;
         iov[1].iov_len = longitud_fname;
 
-        int n_bloque_net = htonl(file->n_bloque_sig);
+        int n_bloque_net = htonl(file->n_bloque_sig + i);
         iov[2].iov_base = &n_bloque_net;
         iov[2].iov_len = sizeof(int);
-        file->n_bloque_sig++;
 
-        int blocksize_net = htonl(blocksize);
-        iov[3].iov_base = &blocksize_net;
+        int num_replica = 0;
+        int num_replica_net = htonl(num_replica);
+        iov[3].iov_base = &num_replica_net;
         iov[3].iov_len = sizeof(int);
 
-        iov[4].iov_base = buff;
-        iov[4].iov_len = blocksize;
+        int size_net = htonl(blocksize);
+        iov[4].iov_base = &size_net;
+        iov[4].iov_len = sizeof(int);
 
-        if (writev(sockfd, iov, 5) < 0)
+        iov[5].iov_base = (void *)((char *)buff + i * blocksize);
+        iov[5].iov_len = blocksize;
+
+        int num_replicas_net = htonl(file->rep_factor);
+        iov[6].iov_base = &num_replicas_net;
+        iov[6].iov_len = sizeof(int);
+
+        iov[7].iov_base = ips;
+        iov[7].iov_len = file->rep_factor * sizeof(unsigned int);
+
+        iov[8].iov_base = ports;
+        iov[8].iov_len = file->rep_factor * sizeof(unsigned short);
+
+        if (writev(sockfd, iov, 9) < 0)
         {
             perror("error en writev");
             close(sockfd);
+            free(ips);
+            free(ports);
             return -1;
         }
 
         int bytes_escritos;
-        if (recv(sockfd, &bytes_escritos, sizeof(int), MSG_WAITALL) != sizeof(int))
-        {
-            perror("error en recv");
+        if (read(sockfd, &bytes_escritos, sizeof(int)) != sizeof(int)){
+            perror("error en read");
             close(sockfd);
+            free(ips);
+            free(ports);
             return -1;
         }
 
         bytes_escritos = ntohl(bytes_escritos);
-        bytes_escritos_total += bytes_escritos;
-        if (bytes_escritos != blocksize)
-        {
+        if (bytes_escritos != blocksize){
             perror("error en bytes_escritos");
             close(sockfd);
+            free(ips);
+            free(ports);
             return -1;
         }
+        bytes_escritos_total += bytes_escritos;
 
         close(sockfd);
+        free(ips);
+        free(ports);
     }
 
+    file->n_bloque_sig += num_blocks;
     return bytes_escritos_total;
 }
